@@ -43,6 +43,8 @@ import Data.Bits
 #if WORD_SIZE_IN_BITS == 32
 import Data.Word
 #endif
+import qualified Data.Vector.Unboxed         as VU
+import qualified Data.Vector.Unboxed.Mutable as VUM
 
 import Math.NumberTheory.Powers.Squares (integerSquareRoot)
 import Math.NumberTheory.Unsafe
@@ -96,7 +98,7 @@ type CacheWord = Word64
 #endif
 
 -- | Compact store of primality flags.
-data PrimeSieve = PS !Integer {-# UNPACK #-} !(UArray Int Bool)
+data PrimeSieve = PS !Integer {-# UNPACK #-} !(VU.Vector Bool)
 
 -- | Sieve primes up to (and including) a bound (or 7, if bound is smaller).
 --   For small enough bounds, this is more efficient than
@@ -108,7 +110,7 @@ data PrimeSieve = PS !Integer {-# UNPACK #-} !(UArray Int Bool)
 --   is often within memory limits, so don't give bounds larger than
 --   @8*10^9@ there.
 primeSieve :: Integer -> PrimeSieve
-primeSieve bound = PS 0 (runSTUArray $ sieveTo bound)
+primeSieve bound = PS 0 (runST . VU.freeze $ sieveTo bound)
 
 -- | Generate a list of primes for consumption from a
 --   'PrimeSieve'.
@@ -259,7 +261,7 @@ slice cache = do
     treat 0
 
 -- | Sieve up to bound in one go.
-sieveTo :: Integer -> ST s (STUArray s Int Bool)
+sieveTo :: Integer -> ST s (VUM.STVector s Bool)
 sieveTo bound = arr
   where
     (bytes,lidx) = idxPr bound
@@ -270,18 +272,18 @@ sieveTo bound = arr
     (kr,r) = idxPr mxsve
     !svbd = 8*kr+r
     arr = do
-        ar <- newArray (0,mxidx) True
+        ar <- VUM.new (mxidx + 1) True
         let start k i = 8*(k*(30*k+2*rho i) + byte i) + idx i
             tick stp off j ix
               | mxidx < ix = return ()
               | otherwise  = do
-                p <- unsafeRead ar ix
-                when p (unsafeWrite ar ix False)
+                p <- VUM.unsafeRead ar ix
+                when p (VUM.unsafeWrite ar ix False)
                 tick stp off ((j+1) .&. J_MASK) (ix + stp*delta j + tau (off+j))
             sift ix
               | svbd < ix = return ar
               | otherwise = do
-                p <- unsafeRead ar ix
+                p <- VUM.unsafeRead ar ix
                 when p  (do let i = ix .&. J_MASK
                                 k = ix `shiftR` J_BITS
                                 !off = i `shiftL` J_BITS
@@ -506,17 +508,17 @@ top w j bc = go 0 TOPB TOPM bn w
 
 {-# INLINE delta #-}
 delta :: Int -> Int
-delta i = unsafeAt deltas i
+delta i = VU.unsafeIndex deltas i
 
-deltas :: UArray Int Int
-deltas = listArray (0,7) [4,2,4,2,4,6,2,6]
+deltas :: VU.Vector Int
+deltas = VU.fromList [4,2,4,2,4,6,2,6]
 
 {-# INLINE tau #-}
 tau :: Int -> Int
-tau i = unsafeAt taus i
+tau i = VU.unsafeIndex taus i
 
-taus :: UArray Int Int
-taus = listArray (0,63)
+taus :: VU.Vector Int
+taus = VU.fromList
         [  7,  4,  7,  4,  7, 12,  3, 12
         , 12,  6, 11,  6, 12, 18,  5, 18
         , 14,  7, 13,  7, 14, 21,  7, 21
@@ -529,28 +531,28 @@ taus = listArray (0,63)
 
 {-# INLINE byte #-}
 byte :: Int -> Int
-byte i = unsafeAt startByte i
+byte i = VU.unsafeIndex startByte i
 
-startByte :: UArray Int Int
-startByte = listArray (0,7) [1,3,5,9,11,17,27,31]
+startByte :: VU.Vector Int
+startByte = VU.fromList [1,3,5,9,11,17,27,31]
 
 {-# INLINE idx #-}
 idx :: Int -> Int
-idx i = unsafeAt startIdx i
+idx i = VU.unsafeIndex startIdx i
 
-startIdx :: UArray Int Int
-startIdx = listArray (0,7) [4,7,4,4,7,4,7,7]
+startIdx :: VU.Vector Int
+startIdx = VU.fromList [4,7,4,4,7,4,7,7]
 
 {-# INLINE mu #-}
 mu :: Int -> Int
-mu i = unsafeAt mArr i
+mu i = VU.unsafeIndex mArr i
 
 {-# INLINE nu #-}
 nu :: Int -> Int
-nu i = unsafeAt nArr i
+nu i = VU.unsafeIndex nArr i
 
-mArr :: UArray Int Int
-mArr = listArray (0,63)
+mArr :: VU.Vector Int
+mArr = VU.fromList
         [ 1,  2,  2,  3,  4,  5,  6,  7
         , 2,  3,  4,  6,  6,  8, 10, 11
         , 2,  4,  5,  7,  8,  9, 12, 13
@@ -561,8 +563,8 @@ mArr = listArray (0,63)
         , 7, 11, 13, 17, 19, 23, 29, 31
         ]
 
-nArr :: UArray Int Int
-nArr = listArray (0,63)
+nArr :: VU.Vector Int
+nArr = VU.fromList
         [ 4, 3, 7, 6, 2, 1, 5, 0
         , 3, 7, 5, 0, 6, 2, 4, 1
         , 7, 5, 4, 1, 0, 6, 3, 2
